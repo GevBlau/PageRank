@@ -6,10 +6,32 @@ import matplotlib.pyplot as plt
 import math
 import statistics
 import winsound
+import random
+
+
+# Setting the personalization vector
+def set_personalization(already_used, without_spammers_flag):
+    # setting the reset vector to zeros
+    personalization = dict.fromkeys(range(hostID_num), 0)
+    # if needed graph without spammers this part delete the spammers slot in reset vector dictionary
+    if without_spammers_flag:
+        for spammer in spammers:
+            del personalization[spammer]
+
+    # this part randomly select trusted site which wasn't selected yet
+    while True:
+        selected_trusted_site = random.sample(trusted, 1)[0]
+        if selected_trusted_site not in already_used:
+            break
+    # this part sets the selected site reset probability to 1
+    personalization.update({selected_trusted_site: 1})
+    # this part is meant to prevent the situation in which the same trusted site was selected more then once
+    already_used.append(selected_trusted_site)
+    return personalization
 
 
 # this function creates the web graph
-def create_graph(filename, num_of_trusted_sites, without_spammers_flag):
+def create_graph(filename):
     G = nx.DiGraph()
     f = open(filename, "r")
     line = f.readline()
@@ -22,17 +44,18 @@ def create_graph(filename, num_of_trusted_sites, without_spammers_flag):
         else:
             color_map.append('blue')
 
-        if node in spammers and without_spammers_flag == 1:
-            G.add_node(node)
-        elif node in trusted and num_of_trusted_sites > 0:
-            G.add_node(node)
-            personalization.update({node: weight_of_trusted_site})
-            nstart.update({node: weight_of_trusted_site})
-            num_of_trusted_sites -= 1
-        else:
-            G.add_node(node)
-            personalization.update({node: 1})
-            nstart.update({node: 1})
+        G.add_node(node)
+        # if node in spammers and without_spammers_flag == 1:
+        #     G.add_node(node)
+        # elif node in trusted and num_of_trusted_sites > 0:
+        #     G.add_node(node)
+        #     # personalization.update({node: weight_of_trusted_site})
+        #     # nstart.update({node: 1})
+        #     # num_of_trusted_sites -= 1
+        # else:
+        #     G.add_node(node)
+        #     # personalization.update({node: 1})
+        #     # nstart.update({node: 0})
 
     for node in range(0, hostID_num):
         line = f.readline()
@@ -40,7 +63,10 @@ def create_graph(filename, num_of_trusted_sites, without_spammers_flag):
             dests = line.split(" ")
             for dest in dests:
                 dest_parts = dest.split(":")
-                G.add_edge(node, int(dest_parts[0]))
+                G.add_edge(node, int(dest_parts[0]), weight=int(dest_parts[1]))
+                # if for multiDiGraph - takes a lot of time
+                # for link in range(0, int(dest_parts[1])):
+                #     G.add_edge(node, int(dest_parts[0]))
     return G
 
 
@@ -58,7 +84,8 @@ def get_assessments(filename):
 
 
 # page rank function
-def pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6, nstart=None, weight='weight', dangling=None):
+def pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6, nstart=None, weight='weight',
+             dangling=None):
     """Return the PageRank of the nodes in the graph.
 
     PageRank computes a ranking of the nodes in the graph G based on
@@ -234,7 +261,7 @@ def get_spam_ranks(pr):
 
 # this function plots the example of network
 def print_network(test_graph_file):
-    G = create_graph(test_graph_file, 0, 0)
+    G = create_graph(test_graph_file)
     nx.draw(G, node_color=color_map, with_labels=True, font_weight='bold')
     plt.savefig("pictures/sites connections.png")
     plt.close()
@@ -247,37 +274,69 @@ def print_progress(iteration_num, total_num):
     sys.stdout.write('\r' + text_to_print)
 
 
+# performing researched PPR
+def researched_PPR(temp_G, k, without_spammers_flag):
+    min_pr = dict()
+    already_used = []
+    if k == 0:
+        min_pr = pagerank(temp_G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6,
+                          nstart=None, weight='weight', dangling=None)
+    else:
+        for i in range(0, k):
+            personalization = set_personalization(already_used, without_spammers_flag)
+            temp_pr = pagerank(temp_G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
+                               nstart=None, weight='weight', dangling=None)
+            if not min_pr:
+                min_pr = temp_pr
+            else:
+                for page in temp_pr:
+                    if temp_pr.get(page) < min_pr.get(page):
+                        min_pr.update({page: temp_pr.get(page)})
+
+        # normalizing the page rank
+        sum_pr = sum(min_pr.values())
+        for page in min_pr:
+            min_pr.update({page: (min_pr.get(page) / sum_pr)})
+
+    return min_pr
+
+
 # challenge 1 - Distance L1
 def challenge_1():
+    ppr_diff = []
     pr_diff = []
     iteration_num = 0.0
+
+    # this part creating the distance l1 of regular PR
+    pr_without_spammers = pagerank(G_without_spammers, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6,
+                                   nstart=None, weight='weight', dangling=None)
+    pr_with_spammers = pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6,
+                                nstart=None, weight='weight', dangling=None)
+    # clearing the spammers from rank
+    clear_spamers(pr_with_spammers)
+    pr_dist_l1 = calculate_dist_l1(pr_without_spammers, pr_with_spammers)
+
     for num in num_trusted_vector:
         # printing the progress of the loop
         print_progress(iteration_num, len(num_trusted_vector))
         iteration_num += 1.0
 
-        # Without Spam
-        personalization.clear()
-        nstart.clear()
-        G = create_graph(graph_file, num, 1)
-        # deleting the spam sites from the web graph
-        delete_spammers_from_graph(G)
-        pr_without_spammers = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
-                                       nstart=nstart, weight='weight', dangling=None)
+        # performing researched PPR on graph without spammers
+        ppr_without_spammers = researched_PPR(G_without_spammers, num, 1)
 
-        # With Spam
-        personalization.clear()
-        nstart.clear()
-        G = create_graph(graph_file, num, 0)
-        pr_with_spammers = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
-                                    nstart=nstart, weight='weight', dangling=None)
+        # performing researched PPR on graph with spammers
+        ppr_with_spammers = researched_PPR(G, num, 0)
+
         # clearing the spammers from rank
-        clear_spamers(pr_with_spammers)
+        clear_spamers(ppr_with_spammers)
         # calculating the distance L1 between PPR without Spammers and PPR with Spammers
-        pr_diff.append(calculate_dist_l1(pr_without_spammers, pr_with_spammers))
+        ppr_diff.append(calculate_dist_l1(ppr_without_spammers, ppr_with_spammers))
+        pr_diff.append(pr_dist_l1)
 
     plt.figure(figsize=(8.7, 5.9))
-    plt.plot(num_trusted_vector, pr_diff, label="")
+    plt.plot(num_trusted_vector, ppr_diff, 'b', label="PPR")
+    plt.plot(num_trusted_vector, pr_diff, 'r', label="PR")
+    plt.legend(loc="upper right")
     plt.xlabel("Number Of Trusted Sites")
     plt.ylabel("Distance L1")
     plt.title("Distance L1 between PPR with spam and PPR without spam Vs num of trusted sites")
@@ -288,45 +347,52 @@ def challenge_1():
 
 # challenge 2 - Spam Resistance
 def challenge_2():
+    spammers_ppr = []
     spammers_pr = []
     iteration_num = 0.0
+
+    # this part creating the spammers sum of regular PR
+    pr = pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6,
+                  nstart=None, weight='weight', dangling=None)
+
+    sum_spammers_pr = calculate_norm_l1(get_spam_ranks(pr))
+
     for num in num_trusted_vector:
         # printing the progress of the loop
         print_progress(iteration_num, len(num_trusted_vector))
         iteration_num += 1.0
 
-        personalization.clear()
-        nstart.clear()
-        G = create_graph(graph_file, num, 0)
-        pr = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
-                                       nstart=nstart, weight='weight', dangling=None)
+        ppr = researched_PPR(G, num, 0)
 
-        spammers_pr.append(calculate_norm_l1(get_spam_ranks(pr)))
+        spammers_ppr.append(calculate_norm_l1(get_spam_ranks(ppr)))
+        spammers_pr.append(sum_spammers_pr)
 
     plt.figure(figsize=(7.7, 5.3))
-    plt.plot(num_trusted_vector, spammers_pr, label="")
+    plt.plot(num_trusted_vector, spammers_ppr, 'b', label="PPR")
+    plt.plot(num_trusted_vector, spammers_pr, 'r', label="PR")
+    plt.legend(loc="upper right")
     plt.xlabel("Number Of Trusted Sites")
     plt.ylabel("Sum of Spam sites rank")
     plt.title("Sum of Spam sites rank Vs Trusted sites number")
     plt.savefig("pictures/Sum of Spam sites rank Vs Trusted sites number.png")
     # plt.show()
-    text_tp_print = "The spam sites rank declined in " + str(abs(100 * ((spammers_pr[len(num_trusted_vector) - 1] -
-                                                               spammers_pr[0]) / spammers_pr[0]))) + "%"
+    text_tp_print = "The spam sites rank declined in " + str(abs(100 * ((spammers_ppr[len(num_trusted_vector) - 1] -
+                                                                         spammers_pr[0]) / spammers_pr[0]))) + "%"
     return text_tp_print
 
 
 # challenge 3 - Distortion
 def challenge_3():
     stdev_pr_diff = []
-    personalization.clear()
-    nstart.clear()
-    G = create_graph(graph_file, 0, 1)
+    # personalization.clear()
+    # nstart.clear()
+    # G = create_graph(graph_file, 0, 1)
+    #
+    # # deleting the spam sites from the web graph
+    # delete_spammers_from_graph(G)
 
-    # deleting the spam sites from the web graph
-    delete_spammers_from_graph(G)
-
-    pr_no_trusted = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
-                  nstart=None, weight='weight', dangling=None)
+    pr_no_trusted = pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6,
+                             nstart=None, weight='weight', dangling=None)
     pr_no_trusted_stdev = statistics.stdev(pr_no_trusted.values())
 
     iteration_num = 0.0
@@ -335,33 +401,59 @@ def challenge_3():
         print_progress(iteration_num, len(num_trusted_vector))
         iteration_num += 1.0
 
-        personalization.clear()
-        nstart.clear()
-        G = create_graph(graph_file, num, 1)
+        # # deleting the spam sites from the web graph
+        # delete_spammers_from_graph(G)
 
-        # deleting the spam sites from the web graph
-        delete_spammers_from_graph(G)
+        pr = researched_PPR(G, num, 0)
 
-        if num == 0:
-            pr = pr_no_trusted
-        else:
-            pr = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
-                                           nstart=None, weight='weight', dangling=None)
+        # if num == 0:
+        #     pr = pr_no_trusted
+        # else:
+        #     pr = pagerank(G, alpha=0.85, personalization=personalization, max_iter=100, tol=1.0e-6,
+        #                   nstart=nstart, weight='weight', dangling=None)
 
         # calculating the difference between Standard Deviation of PR and PPR as an index for distortion
         stdev_pr_diff.append(statistics.stdev(pr.values()) - pr_no_trusted_stdev)
 
     plt.figure(figsize=(7.7, 5.3))
-    plt.plot(num_trusted_vector, stdev_pr_diff, label="")
+    plt.plot(num_trusted_vector, stdev_pr_diff, label="PPR")
+    plt.legend(loc="upper right")
     plt.xlabel("Number Of Trusted Sites")
     plt.ylabel("Distortion")
     plt.title("Distortion Vs Trusted sites number")
     plt.savefig("pictures/Distortion Vs Trusted sites number.png")
     # plt.show()
-    decline_percentage = abs(100 * ((stdev_pr_diff[len(num_trusted_vector) - 1] - max(stdev_pr_diff)) / max(stdev_pr_diff)))
-    text_tp_print = "The Distortion decline from pick to max number of trusted sites is " + str(decline_percentage) + "%"
+    decline_percentage = abs(
+        100 * ((stdev_pr_diff[len(num_trusted_vector) - 1] - max(stdev_pr_diff)) / max(stdev_pr_diff)))
+    text_tp_print = "The Distortion decline from pick to max number of trusted sites is " + str(
+        decline_percentage) + "%"
     # print("The Distortion decline from pick to max number of trusted sites is " + str(decline_percentage) + "%")
     return text_tp_print
+
+
+def gather_network_details(filename):
+    f = open(filename, "r")
+    line = f.readline()
+    hostID_num = int(line)
+    for node in range(0, hostID_num):
+        num_links = 0
+        line = f.readline()
+        if line != "\n":
+            dests = line.split(" ")
+            for dest in dests:
+                dest_parts = dest.split(":")
+                num_links += int(dest_parts[1])
+        degree.append(num_links)
+
+    total_number_of_links = sum(degree)
+    print ("Total number of links in the web = " + str(total_number_of_links))
+    max_number_of_links = max(degree)
+    print ("Max number of links = " + str(max_number_of_links))
+    min_number_of_links = min(degree)
+    print ("Min number of links = " + str(min_number_of_links))
+    avg_number_of_links = statistics.mean(degree)
+    print ("Average number of links = " + str(avg_number_of_links) + "\n")
+    return hostID_num
 
 
 # MAIN
@@ -371,12 +463,26 @@ assessments_file_1 = "assessments_1.txt"
 assessments_file_2 = "assessments_2.txt"
 
 # initializing variables
-trusted = set()                 # set of trusted sites
-spammers = set()                # set of spam sites
-color_map = []                  # for graph plot
-personalization = dict()        # for PPR
-nstart = dict()                 # for controlling reset vector
+trusted = set()  # set of trusted sites
+spammers = set()  # set of spam sites
+color_map = []  # for graph plot
+# personalization = dict()  # for PPR
+nstart = dict()  # for controlling reset vector
 weight_of_trusted_site = 200
+degree = []
+
+import networkx.algorithms.isomorphism as iso
+
+# G1 = nx.DiGraph()
+# G2 = nx.DiGraph()
+# G1.add_path([1,2,3,4],weight=1)
+# G2.add_path([1,2,3,4],weight=1)
+# G2.remove_node(4)
+# em = iso.numerical_edge_match('weight', 1)
+# a = nx.is_isomorphic(G1, G2)  # no weights considered
+# b = nx.is_isomorphic(G1, G2, edge_match=em)  # match weights
+# # a = G_without_spammers == G
+
 
 # plotting an example for web graph
 print("Plotting an example for Webgraph...")
@@ -387,13 +493,22 @@ spammers.clear()
 print("Done")
 
 # dealing with the real web graph
-get_assessments(assessments_file_1)   # get classification for first part of sites
-get_assessments(assessments_file_2)   # get classification for second part of sites
-num_trusted_vector = list(np.arange(0, len(trusted), 200))
+get_assessments(assessments_file_1)  # get classification for first part of sites
+get_assessments(assessments_file_2)  # get classification for second part of sites
+num_trusted_vector = list(np.arange(0, 18, 3))
 
-# plotting the L1 distance between PPR with spam and PPR without spam Vs number of trusted sites
-print("Attacking the first challenge...")
-challenge_1()
+# Gathering network details
+print("Gathering network details...")
+hostID_num = gather_network_details(graph_file)
+print("\rDone")
+
+# creating graph
+print("Creating Graph...")
+G = create_graph(graph_file)
+# creating a graph without spammers
+G_without_spammers = create_graph(graph_file)
+# deleting the spam sites from the web graph
+delete_spammers_from_graph(G_without_spammers)
 print("\rDone")
 
 # plotting the ranks of spammers as function of trusted sites number
@@ -407,6 +522,11 @@ print("Attacking the third challenge...")
 Distortion_Decline = challenge_3()
 print("\r" + Distortion_Decline)
 print("Done")
+
+# plotting the L1 distance between PPR with spam and PPR without spam Vs number of trusted sites
+# print("Attacking the first challenge...")
+# challenge_1()
+# print("\rDone")
 
 # playing a beep to declare the end of the simulation
 frequency = 1500  # Set Frequency To 1500 Hertz
