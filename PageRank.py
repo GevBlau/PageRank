@@ -145,6 +145,11 @@ def pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6, nsta
 
 
     """
+
+    # updating counter of total algorithms runs
+    global total_number_of_PR_runs
+    total_number_of_PR_runs += 1
+
     if len(G) == 0:
         return {}
 
@@ -208,6 +213,9 @@ def pagerank(G, alpha=0.85, personalization=None, max_iter=100, tol=1.0e-6, nsta
         # check convergence, l1 norm
         err = sum([abs(x[n] - xlast[n]) for n in x])
         if err < N * tol:
+            # updating counter of algorithms runs before max iter
+            global finish_before_max_iter_counter
+            finish_before_max_iter_counter += 1
             return x
     raise NetworkXError('pagerank: power iteration failed to converge '
                         'in %d iterations.' % max_iter)
@@ -523,6 +531,8 @@ color_map = []  # for graph plot
 nstart = dict()  # for controlling reset vector
 weight_of_trusted_site = 200
 out_degree = []
+finish_before_max_iter_counter = 0
+total_number_of_PR_runs = 0
 
 # plotting an example for web graph
 print("Plotting an example for Webgraph...")
@@ -535,7 +545,7 @@ print("Done")
 # dealing with the real web graph
 get_assessments(assessments_file_1)  # get classification for first part of sites
 get_assessments(assessments_file_2)  # get classification for second part of sites
-num_trusted_vector = list(np.arange(0, 30, 4))
+num_trusted_vector = list(np.arange(1, 30, 2))
 
 # Gathering network details
 print("Gathering network details...")
